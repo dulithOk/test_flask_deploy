@@ -1,4 +1,4 @@
-name: Deploy to PythonAnywhere (via API)
+name: Deploy to PythonAnywhere
 
 on:
   push:
@@ -10,21 +10,29 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Trigger PythonAnywhere Deployment
+    - name: Start PythonAnywhere Console
+      id: start_console
       run: |
         curl -X POST https://www.pythonanywhere.com/api/v0/user/${{ secrets.PA_USERNAME }}/consoles/ \
           -H "Authorization: Token ${{ secrets.PA_API_TOKEN }}" \
           -H "Content-Type: application/json" \
           -d '{"executable": "/bin/bash"}' > response.json
+        cat response.json
+        echo "console_id=$(jq -r .id response.json)" >> $GITHUB_OUTPUT
 
-        CONSOLE_ID=$(jq -r .id response.json)
+    - name: Wait for console to be ready
+      run: |
+        echo "Waiting for console to start..."
+        sleep 10
 
-        curl -X POST https://www.pythonanywhere.com/api/v0/user/${{ secrets.PA_USERNAME }}/consoles/${CONSOLE_ID}/send_input/ \
+    - name: Send commands to PythonAnywhere
+      run: |
+        curl -X POST https://www.pythonanywhere.com/api/v0/user/${{ secrets.PA_USERNAME }}/consoles/${{ steps.start_console.outputs.console_id }}/send_input/ \
           -H "Authorization: Token ${{ secrets.PA_API_TOKEN }}" \
           -H "Content-Type: application/json" \
           -d "{\"input\": \"cd ${{ secrets.PA_REPO_DIR }} && git pull origin main && touch /var/www/${{ secrets.PA_USERNAME }}_pythonanywhere_com_wsgi.py\\n\"}"
 
-        sleep 10  # Allow some time for the command to run
-
-        curl -X DELETE https://www.pythonanywhere.com/api/v0/user/${{ secrets.PA_USERNAME }}/consoles/${CONSOLE_ID}/ \
+    - name: Close the console
+      run: |
+        curl -X DELETE https://www.pythonanywhere.com/api/v0/user/${{ secrets.PA_USERNAME }}/consoles/${{ steps.start_console.outputs.console_id }}/ \
           -H "Authorization: Token ${{ secrets.PA_API_TOKEN }}"
