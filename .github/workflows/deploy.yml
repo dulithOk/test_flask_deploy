@@ -1,70 +1,30 @@
-# .github/workflows/deploy.yml
-
-name: Deploy to PythonAnywhere
+name: Deploy to PythonAnywhere (via API)
 
 on:
   push:
     branches:
-      - main # or 'master', depending on your default branch
-  workflow_dispatch: # Allows manual triggering of the workflow from GitHub Actions tab
+      - main
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v3
-
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.9' # Use the Python version your PythonAnywhere app uses
-
-    - name: Install PythonAnywhere API client
-      run: pip install pythonanywhere
-
-    - name: Get latest code on PythonAnywhere and reload web app
-      env:
-        PA_USERNAME: ${{ secrets.PYTHONANYWHERE_USERNAME }}
-        PA_API_TOKEN: ${{ secrets.PYTHONANYWHERE_API_TOKEN }}
-        PA_DOMAIN_NAME: ${{ secrets.PYTHONANYWHERE_WEBAPP_DOMAIN }}
-        PA_HOST: ${{ secrets.PYTHONANYWHERE_HOST }}
+    - name: Trigger PythonAnywhere Deployment
       run: |
-        # Navigate to your project directory on PythonAnywhere (this is where your git repo is)
-        # You might need to adjust this path based on your PythonAnywhere setup
-        # This step assumes your PythonAnywhere web app is configured to git pull on its own somehow
-        # or that the 'pythonanywhere reload' command implicitly pulls from a source
-        # For a direct 'git pull' from GitHub Action, you'd need SSH access with keys.
-        # A simpler way is to ensure PythonAnywhere itself pulls the latest code.
+        curl -X POST https://www.pythonanywhere.com/api/v0/user/${{ secrets.PA_USERNAME }}/consoles/ \
+          -H "Authorization: Token ${{ secrets.PA_API_TOKEN }}" \
+          -H "Content-Type: application/json" \
+          -d '{"executable": "/bin/bash"}' > response.json
 
-        # We'll use a simple curl call to the PythonAnywhere API to reload the web app.
-        # It's assumed that your PythonAnywhere setup already has a git repo configured
-        # and will pull latest changes when the app reloads or on a schedule.
+        CONSOLE_ID=$(jq -r .id response.json)
 
-        # Alternative approach (more direct, requires SSH access setup for GitHub Actions):
-        # If you want GitHub Actions to SSH into PythonAnywhere and perform `git pull`,
-        # you'll need to set up SSH keys in GitHub Secrets and use `appleboy/ssh-action`.
-        # However, the most straightforward way is to let PythonAnywhere handle the pull
-        # when the web app reloads.
+        curl -X POST https://www.pythonanywhere.com/api/v0/user/${{ secrets.PA_USERNAME }}/consoles/${CONSOLE_ID}/send_input/ \
+          -H "Authorization: Token ${{ secrets.PA_API_TOKEN }}" \
+          -H "Content-Type: application/json" \
+          -d "{\"input\": \"cd ${{ secrets.PA_REPO_DIR }} && git pull origin main && touch /var/www/${{ secrets.PA_USERNAME }}_pythonanywhere_com_wsgi.py\\n\"}"
 
-        # This script will trigger the PythonAnywhere web app reload via its API
-        # This assumes your PA app is already set up to pull from your GitHub repo
-        # whenever it reloads.
+        sleep 10  # Allow some time for the command to run
 
-        curl -X POST \
-          -H "Authorization: Token $PA_API_TOKEN" \
-          "https://$PA_HOST/api/v0/users/$PA_USERNAME/webapps/$PA_DOMAIN_NAME/reload/"
-
-        echo "Successfully triggered web app reload on PythonAnywhere!"
-
-        # If you encounter issues with the web app not picking up changes,
-        # it might be due to PythonAnywhere not automatically pulling.
-        # For a more robust solution, especially for larger projects,
-        # consider using PythonAnywhere's "post-receive hook" for git deployment
-        # (which requires a paid account and SSH setup), or a dedicated GitHub Action
-        # that uses SSH to pull on PythonAnywhere.
-        # The current approach relies on your PythonAnywhere app *itself* performing a git pull
-        # when it reloads, or on a schedule, or you manually pulling on PythonAnywhere.
-        # If your app doesn't pull on reload, you might need a simple PythonAnywhere scheduled task
-        # to run `git pull` periodically, or use the SSH approach described next.
+        curl -X DELETE https://www.pythonanywhere.com/api/v0/user/${{ secrets.PA_USERNAME }}/consoles/${CONSOLE_ID}/ \
+          -H "Authorization: Token ${{ secrets.PA_API_TOKEN }}"
