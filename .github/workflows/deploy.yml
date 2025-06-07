@@ -1,4 +1,4 @@
-name: Deploy to PythonAnywhere (via API)
+name: Deploy to PythonAnywhere
 
 on:
   push:
@@ -10,21 +10,52 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Trigger PythonAnywhere Deployment
+    - name: Show GitHub context and debug info
       run: |
+        echo "GITHUB_REPOSITORY: $GITHUB_REPOSITORY"
+        echo "GITHUB_REF: $GITHUB_REF"
+        echo "PA_USERNAME: ${{ secrets.PA_USERNAME }}"
+        echo "PA_REPO_DIR: ${{ secrets.PA_REPO_DIR }}"
+        echo "Checking connectivity to PythonAnywhere API"
+        curl -I https://www.pythonanywhere.com
+
+    - name: Start PythonAnywhere Console
+      id: start_console
+      run: |
+        echo "Starting PythonAnywhere console..."
         curl -X POST https://www.pythonanywhere.com/api/v0/user/${{ secrets.PA_USERNAME }}/consoles/ \
           -H "Authorization: Token ${{ secrets.PA_API_TOKEN }}" \
           -H "Content-Type: application/json" \
           -d '{"executable": "/bin/bash"}' > response.json
 
-        CONSOLE_ID=$(jq -r .id response.json)
+        echo "Console start response:"
+        cat response.json
 
-        curl -X POST https://www.pythonanywhere.com/api/v0/user/${{ secrets.PA_USERNAME }}/consoles/${CONSOLE_ID}/send_input/ \
+        console_id=$(jq -r .id response.json)
+
+        if [ "$console_id" = "null" ] || [ -z "$console_id" ]; then
+          echo "❌ ERROR: Console not started properly. Check your PA_USERNAME and PA_API_TOKEN secrets."
+          exit 1
+        fi
+
+        echo "✅ Console ID: $console_id"
+        echo "console_id=$console_id" >> $GITHUB_OUTPUT
+
+    - name: Wait for console to be ready
+      run: |
+        echo "⌛ Waiting for the console to be ready..."
+        sleep 10
+
+    - name: Pull and reload app on PythonAnywhere
+      run: |
+        echo "Pulling latest code and reloading the app..."
+        curl -X POST https://www.pythonanywhere.com/api/v0/user/${{ secrets.PA_USERNAME }}/consoles/${{ steps.start_console.outputs.console_id }}/send_input/ \
           -H "Authorization: Token ${{ secrets.PA_API_TOKEN }}" \
           -H "Content-Type: application/json" \
           -d "{\"input\": \"cd ${{ secrets.PA_REPO_DIR }} && git pull origin main && touch /var/www/${{ secrets.PA_USERNAME }}_pythonanywhere_com_wsgi.py\\n\"}"
 
-        sleep 10  # Allow some time for the command to run
-
-        curl -X DELETE https://www.pythonanywhere.com/api/v0/user/${{ secrets.PA_USERNAME }}/consoles/${CONSOLE_ID}/ \
+    - name: Close PythonAnywhere console
+      run: |
+        echo "🧹 Closing console..."
+        curl -X DELETE https://www.pythonanywhere.com/api/v0/user/${{ secrets.PA_USERNAME }}/consoles/${{ steps.start_console.outputs.console_id }}/ \
           -H "Authorization: Token ${{ secrets.PA_API_TOKEN }}"
